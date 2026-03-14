@@ -10,6 +10,8 @@ import {
   Legend
 } from "recharts";
 
+const API_BASE = "http://localhost:5001";
+
 const FALLBACK_CITY = {
   name: "Melbourne, Victoria",
   latitude: -37.8136,
@@ -17,15 +19,15 @@ const FALLBACK_CITY = {
   timezone: "Australia/Melbourne"
 };
 
-const API_BASE = "http://localhost:5001";
-
 export default function App() {
   const [page, setPage] = useState("home");
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [loadingWeather, setLoadingWeather] = useState(true);
   const [error, setError] = useState("");
   const [weatherData, setWeatherData] = useState(null);
-  const [mythFacts, setMythFacts] = useState([]);
+  const [myths, setMyths] = useState([]);
+  const [skinCancerTrend, setSkinCancerTrend] = useState([]);
+  const [monthlyUv2pm, setMonthlyUv2pm] = useState([]);
 
   const [locationData, setLocationData] = useState({
     latitude: FALLBACK_CITY.latitude,
@@ -37,16 +39,15 @@ export default function App() {
 
   const [uvThreshold, setUvThreshold] = useState(8);
   const [thresholdEnabled, setThresholdEnabled] = useState(false);
-  const [bannerMessage, setBannerMessage] = useState("");
   const [dynamicThemeEnabled, setDynamicThemeEnabled] = useState(true);
-  const [browserNotificationsEnabled, setBrowserNotificationsEnabled] =
-    useState(false);
-  const [lastTriggeredBucket, setLastTriggeredBucket] = useState(null);
-
   const [reminderEnabled, setReminderEnabled] = useState(false);
   const [reminderStart, setReminderStart] = useState("10:00");
   const [reminderInterval, setReminderInterval] = useState(2);
   const [nextReminder, setNextReminder] = useState("");
+  const [bannerMessage, setBannerMessage] = useState("");
+  const [browserNotificationsEnabled, setBrowserNotificationsEnabled] =
+    useState(false);
+  const [lastTriggeredBucket, setLastTriggeredBucket] = useState(null);
 
   const reminderTimerRef = useRef(null);
 
@@ -61,52 +62,64 @@ export default function App() {
       const response = await fetch(`${API_BASE}/api/preferences`);
       const data = await response.json();
 
-      setUvThreshold(data.uvThreshold ?? 8);
-      setThresholdEnabled(data.thresholdEnabled ?? false);
-      setDynamicThemeEnabled(data.dynamicThemeEnabled ?? true);
-      setReminderEnabled(data.reminderEnabled ?? false);
-      setReminderStart(data.reminderStart ?? "10:00");
-      setReminderInterval(data.reminderInterval ?? 2);
+      setUvThreshold(data.uv_threshold ?? 8);
+      setThresholdEnabled(Boolean(data.threshold_enabled));
+      setDynamicThemeEnabled(Boolean(data.dynamic_theme_enabled));
+      setReminderEnabled(Boolean(data.reminder_enabled));
+      setReminderStart(data.reminder_start ?? "10:00");
+      setReminderInterval(data.reminder_interval ?? 2);
     } catch (err) {
       console.error("Failed to load preferences:", err);
     }
   }
 
   async function savePreferences(overrides = {}) {
+    const payload = {
+      uvThreshold,
+      thresholdEnabled,
+      dynamicThemeEnabled,
+      reminderEnabled,
+      reminderStart,
+      reminderInterval,
+      ...overrides
+    };
+
     try {
       await fetch(`${API_BASE}/api/preferences`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          uvThreshold,
-          thresholdEnabled,
-          dynamicThemeEnabled,
-          reminderEnabled,
-          reminderStart,
-          reminderInterval,
-          ...overrides
-        })
+        body: JSON.stringify(payload)
       });
     } catch (err) {
       console.error("Failed to save preferences:", err);
     }
   }
 
-  async function loadMyths() {
-    try {
-      const response = await fetch(`${API_BASE}/api/myths`);
-      const data = await response.json();
-      setMythFacts(data);
-    } catch (err) {
-      console.error("Failed to load myths:", err);
-    }
-  }
-
   useEffect(() => {
+    async function loadStaticData() {
+      try {
+        const [mythsRes, trendRes, monthlyRes] = await Promise.all([
+          fetch(`${API_BASE}/api/myths`),
+          fetch(`${API_BASE}/api/skin-cancer-trend`),
+          fetch(`${API_BASE}/api/monthly-uv-2pm`)
+        ]);
+
+        const mythsData = await mythsRes.json();
+        const trendData = await trendRes.json();
+        const monthlyData = await monthlyRes.json();
+
+        setMyths(mythsData);
+        setSkinCancerTrend(trendData);
+        setMonthlyUv2pm(monthlyData);
+      } catch (err) {
+        console.error("Failed to load awareness data:", err);
+      }
+    }
+
     loadPreferences();
-    loadMyths();
+    loadStaticData();
   }, []);
 
   useEffect(() => {
@@ -170,14 +183,6 @@ export default function App() {
           },
           () => {
             if (cancelled) return;
-
-            setLocationData({
-              latitude: FALLBACK_CITY.latitude,
-              longitude: FALLBACK_CITY.longitude,
-              timezone: FALLBACK_CITY.timezone,
-              name: FALLBACK_CITY.name,
-              source: "fallback"
-            });
             setBannerMessage(
               "Location access was not available. Melbourne is being used as the default location."
             );
@@ -239,7 +244,6 @@ export default function App() {
             name: `${city}${admin}`,
             source: "gps"
           });
-
           setBannerMessage("Location refreshed successfully.");
         } catch {
           setLocationData((prev) => ({
@@ -259,11 +263,7 @@ export default function App() {
           "Unable to refresh location. Keeping the current location setting."
         );
       },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0
-      }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   }
 
@@ -273,13 +273,11 @@ export default function App() {
         setLoadingWeather(true);
         setError("");
 
-        const url = `${API_BASE}/api/uv?lat=${locationData.latitude}&lng=${locationData.longitude}&timezone=${encodeURIComponent(locationData.timezone)}`;
-        const response = await fetch(url);
+        const response = await fetch(
+          `${API_BASE}/api/uv?lat=${locationData.latitude}&lng=${locationData.longitude}&timezone=${encodeURIComponent(locationData.timezone)}`
+        );
 
-        if (!response.ok) {
-          throw new Error("Unable to load live UV data.");
-        }
-
+        if (!response.ok) throw new Error("Unable to load live UV data.");
         const data = await response.json();
         setWeatherData(data);
       } catch (err) {
@@ -293,25 +291,39 @@ export default function App() {
   }, [locationData.latitude, locationData.longitude, locationData.timezone]);
 
   const currentUv = weatherData?.current?.uv_index ?? 0;
-  const dailyUv = weatherData?.daily?.uv_index_max ?? [];
-  const clearSkyUv = weatherData?.daily?.uv_index_clear_sky_max ?? [];
-  const dailyDates = weatherData?.daily?.time ?? [];
+  const currentTemp = weatherData?.current?.temperature_2m;
   const sunrise = weatherData?.daily?.sunrise?.[0];
   const sunset = weatherData?.daily?.sunset?.[0];
   const hourlyTimes = weatherData?.hourly?.time ?? [];
   const hourlyUv = weatherData?.hourly?.uv_index ?? [];
   const hourlyClearUv = weatherData?.hourly?.uv_index_clear_sky ?? [];
-  const currentTemp = weatherData?.current?.temperature_2m;
 
-  const maxDailyValue = useMemo(() => {
-    if (!dailyUv.length && !clearSkyUv.length) return 12;
-    return Math.max(...dailyUv, ...clearSkyUv, 12);
-  }, [dailyUv, clearSkyUv]);
+  const hourlyChartData = useMemo(
+    () =>
+      hourlyTimes.map((time, index) => ({
+        label: formatTime(time),
+        uv: Number((hourlyUv[index] ?? 0).toFixed(1)),
+        clearSkyUv: Number((hourlyClearUv[index] ?? 0).toFixed(1))
+      })),
+    [hourlyTimes, hourlyUv, hourlyClearUv]
+  );
 
   const maxHourlyValue = useMemo(() => {
     if (!hourlyUv.length && !hourlyClearUv.length) return 12;
     return Math.max(...hourlyUv, ...hourlyClearUv, 12);
   }, [hourlyUv, hourlyClearUv]);
+
+  const peakHourInfo = useMemo(() => {
+    if (!hourlyUv.length || !hourlyTimes.length) return null;
+    let bestIndex = 0;
+    for (let i = 1; i < hourlyUv.length; i += 1) {
+      if ((hourlyUv[i] ?? 0) > (hourlyUv[bestIndex] ?? 0)) bestIndex = i;
+    }
+    return {
+      time: hourlyTimes[bestIndex],
+      uv: hourlyUv[bestIndex]
+    };
+  }, [hourlyUv, hourlyTimes]);
 
   function getRiskLabel(uv) {
     if (uv >= 11) return "Extreme";
@@ -353,14 +365,6 @@ export default function App() {
     return "longer than 45 minutes";
   }
 
-  function formatDayLabel(dateString) {
-    return new Date(dateString).toLocaleDateString("en-AU", {
-      weekday: "short",
-      day: "numeric",
-      month: "short"
-    });
-  }
-
   function formatTime(dateString) {
     if (!dateString) return "—";
     return new Date(dateString).toLocaleTimeString("en-AU", {
@@ -373,7 +377,6 @@ export default function App() {
     const today = new Date();
     const [hours, minutes] = reminderStart.split(":").map(Number);
     const next = new Date(today);
-
     next.setHours(hours, minutes, 0, 0);
 
     if (next <= today) {
@@ -396,7 +399,6 @@ export default function App() {
     }
 
     const permission = await Notification.requestPermission();
-
     if (permission === "granted") {
       setBrowserNotificationsEnabled(true);
       setBannerMessage("Browser notifications enabled successfully.");
@@ -454,11 +456,24 @@ export default function App() {
 
     setNextReminder(createReminderTimeLabel(0));
 
-    reminderTimerRef.current = setInterval(() => {
+    reminderTimerRef.current = setInterval(async () => {
       const message = `Reminder: reapply sunscreen to maintain protection in ${locationData.name}.`;
       setBannerMessage(message);
       sendNotification("Sunscreen Reminder", message);
       setNextReminder(createReminderTimeLabel(reminderInterval));
+
+      try {
+        await fetch(`${API_BASE}/api/reminder-log`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reminderTime: new Date().toISOString(),
+            status: "sent"
+          })
+        });
+      } catch (err) {
+        console.error("Failed to save reminder log:", err);
+      }
     }, reminderInterval * 60 * 60 * 1000);
 
     return () => {
@@ -516,42 +531,6 @@ export default function App() {
       : "theme-low-bg"
     : "theme-default-bg";
 
-  const accentBadgeClass = dynamicThemeEnabled
-    ? currentUv >= 11
-      ? "badge-extreme"
-      : currentUv >= 8
-      ? "badge-very-high"
-      : currentUv >= 6
-      ? "badge-high"
-      : currentUv >= 3
-      ? "badge-moderate"
-      : "badge-low"
-    : "badge-default";
-
-  const peakHourInfo = useMemo(() => {
-    if (!hourlyUv.length || !hourlyTimes.length) return null;
-
-    let bestIndex = 0;
-    for (let i = 1; i < hourlyUv.length; i += 1) {
-      if ((hourlyUv[i] ?? 0) > (hourlyUv[bestIndex] ?? 0)) bestIndex = i;
-    }
-
-    return {
-      time: hourlyTimes[bestIndex],
-      uv: hourlyUv[bestIndex]
-    };
-  }, [hourlyUv, hourlyTimes]);
-
-  const hourlyChartData = useMemo(
-    () =>
-      hourlyTimes.map((time, index) => ({
-        label: formatTime(time),
-        uv: Number((hourlyUv[index] ?? 0).toFixed(1)),
-        clearSkyUv: Number((hourlyClearUv[index] ?? 0).toFixed(1))
-      })),
-    [hourlyTimes, hourlyUv, hourlyClearUv]
-  );
-
   return (
     <div className={`app-shell ${pageThemeClass}`}>
       <div className="container">
@@ -560,8 +539,7 @@ export default function App() {
             <p className="eyebrow">FIT5120 PROTOTYPE</p>
             <h1 className="site-title">Sun Safety Awareness Platform</h1>
             <p className="subtle">
-              Front-end/back-end separated version with alerts, reminders,
-              sharing, and hourly UV forecast
+              Full version with alerts, reminders, dynamic theme, database, and awareness charts
             </p>
           </div>
 
@@ -595,13 +573,12 @@ export default function App() {
         {!loading && !error && page === "home" && (
           <div className="page-section">
             <section className="hero-grid">
-              <div className="panel hero-panel">
+              <div className="panel">
                 <div className="hero-top-row">
                   <div>
                     <p className="eyebrow">Project Overview</p>
                     <h2 className="hero-title">
-                      Supporting young adults to make informed sun-safety
-                      decisions in high-UV environments.
+                      Supporting young adults to make informed sun-safety decisions in high-UV environments.
                     </h2>
                   </div>
 
@@ -613,32 +590,22 @@ export default function App() {
                         ? "Using current device location"
                         : "Using default location"}
                     </p>
-                    <button
-                      onClick={detectLocationAgain}
-                      className="dark-button"
-                    >
+                    <button onClick={detectLocationAgain} className="dark-button">
                       Refresh Location
                     </button>
                   </div>
                 </div>
 
                 <p className="body-text">
-                  This full-stack version uses a React frontend and an Express
-                  backend. The backend proxies UV data, provides myth content,
-                  and stores user preferences for reminders, UV alerts, and
-                  theme settings.
+                  This full version combines live UV data, proactive alerts, reminders,
+                  dynamic interface adaptation, database-backed awareness content, and two
+                  educational charts to promote safer sun behaviour.
                 </p>
 
                 <div className="badge-row">
-                  <span className={`badge ${accentBadgeClass}`}>
-                    Automatic location detection
-                  </span>
-                  <span className="badge badge-blue">
-                    Hourly UV interpretation
-                  </span>
-                  <span className="badge badge-green">
-                    Backend-powered preferences
-                  </span>
+                  <span className="badge badge-orange">Automatic location detection</span>
+                  <span className="badge badge-blue">Hourly UV interpretation</span>
+                  <span className="badge badge-green">Database-driven awareness content</span>
                 </div>
               </div>
 
@@ -649,8 +616,7 @@ export default function App() {
                   <span className="risk-pill">{risk}</span>
                 </div>
                 <p className="uv-text">
-                  Your skin may begin experiencing UV-related damage in{" "}
-                  {timeToDamage} if unprotected.
+                  Your skin may begin experiencing UV-related damage in {timeToDamage} if unprotected.
                 </p>
                 <div className="uv-card">
                   <p className="uv-subheading">Recommended action</p>
@@ -665,17 +631,12 @@ export default function App() {
                 { title: "Risk Category", text: risk },
                 {
                   title: "Temperature",
-                  text:
-                    currentTemp != null
-                      ? `${Number(currentTemp).toFixed(1)}°C`
-                      : "—"
+                  text: currentTemp != null ? `${Number(currentTemp).toFixed(1)}°C` : "—"
                 },
                 {
                   title: "Peak Hour Today",
                   text: peakHourInfo
-                    ? `${formatTime(peakHourInfo.time)} (${Number(
-                        peakHourInfo.uv
-                      ).toFixed(1)})`
+                    ? `${formatTime(peakHourInfo.time)} (${Number(peakHourInfo.uv).toFixed(1)})`
                     : "—"
                 }
               ].map((item) => (
@@ -746,105 +707,101 @@ export default function App() {
             <section className="panel">
               <p className="eyebrow">Awareness and Education</p>
               <h2 className="section-title">
-                Presenting daily and hourly UV information in a more
-                understandable and shareable format.
+                Real database-driven visualisations for UV awareness and health education
               </h2>
               <p className="body-text">
-                This page combines backend-provided myth content with live UV
-                forecast data to support awareness among young adults.
+                This page presents two awareness charts. The first chart shows the
+                long-term trend of skin cancer incidence in Australia based on your cleaned
+                Excel dataset. The second chart shows Melbourne average UV index at 2PM by month.
               </p>
             </section>
 
             <section className="two-col-grid">
               <div className="panel">
-                <h3 className="card-title">7-Day UV Forecast</h3>
+                <h3 className="card-title">Australian Skin Cancer Incidence Trend</h3>
                 <p className="small-copy">
-                  Real data visualisation of daily maximum UV exposure for the
-                  next seven days.
+                  Data source: cleaned Excel dataset imported into the relational database.
                 </p>
-
-                <div className="chart-box">
-                  {dailyDates.map((date, index) => {
-                    const uv = dailyUv[index] ?? 0;
-                    const clearUv = clearSkyUv[index] ?? 0;
-
-                    return (
-                      <div key={date} className="chart-row">
-                        <div className="chart-header">
-                          <span className="chart-date">{formatDayLabel(date)}</span>
-                          <span className="chart-values">
-                            UV max {Number(uv).toFixed(1)} / Clear-sky{" "}
-                            {Number(clearUv).toFixed(1)}
-                          </span>
-                        </div>
-
-                        <div className="bar-stack">
-                          <div className="bar-bg">
-                            <div
-                              className="bar-fill orange-fill"
-                              style={{
-                                width: `${(uv / maxDailyValue) * 100}%`
-                              }}
-                            />
-                          </div>
-                          <div className="bar-bg small-bar">
-                            <div
-                              className="bar-fill blue-fill"
-                              style={{
-                                width: `${(clearUv / maxDailyValue) * 100}%`
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="chart-large">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={skinCancerTrend}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="year" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="incidence_rate"
+                        name="Incidence rate per 100,000"
+                        stroke="#e11d48"
+                        strokeWidth={3}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
               </div>
 
-              <div className="right-col-stack">
-                <div className="panel">
-                  <h3 className="card-title">Myth vs Fact</h3>
-                  <div className="note-list">
-                    {mythFacts.map((item) => (
-                      <div key={item.myth} className="note-card">
-                        <p className="myth-label">Myth</p>
-                        <p className="note-text">{item.myth}</p>
-                        <p className="fact-label">Fact</p>
-                        <p className="note-text">{item.fact}</p>
-                      </div>
-                    ))}
-                  </div>
+              <div className="panel">
+                <h3 className="card-title">Melbourne Average UV Index at 2PM by Month</h3>
+                <p className="small-copy">
+                  Data source: monthly 2PM UV values stored in the relational database.
+                </p>
+                <div className="chart-large">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={monthlyUv2pm}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="avg_uv_2pm"
+                        name="Average UV Index at 2PM"
+                        stroke="#2563eb"
+                        strokeWidth={3}
+                        activeDot={{ r: 5 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
+              </div>
+            </section>
 
-                <div className="panel">
-                  <h3 className="card-title">Share Awareness</h3>
-                  <p className="small-copy">
-                    Share this UV awareness page with friends to encourage safer
-                    sun-safety behaviour.
-                  </p>
-
-                  <div className="share-row">
-                    <button onClick={handleShare} className="primary-button">
-                      Share Page
-                    </button>
-                    <button onClick={handleCopyLink} className="secondary-button">
-                      Copy Link
-                    </button>
-                    <a
-                      href={`https://wa.me/?text=${encodeURIComponent(
-                        `Current UV in ${locationData.name} is ${Number(
-                          currentUv
-                        ).toFixed(1)}. ${window.location.href}`
-                      )}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="whatsapp-button"
-                    >
-                      WhatsApp
-                    </a>
+            <section className="panel">
+              <h3 className="card-title">Myth vs Fact</h3>
+              <div className="note-list">
+                {myths.map((item) => (
+                  <div key={item.myth} className="note-card">
+                    <p className="myth-label">Myth</p>
+                    <p className="note-text">{item.myth}</p>
+                    <p className="fact-label">Fact</p>
+                    <p className="note-text">{item.fact}</p>
                   </div>
-                </div>
+                ))}
+              </div>
+
+              <div className="share-row">
+                <button onClick={handleShare} className="primary-button">
+                  Share Page
+                </button>
+                <button onClick={handleCopyLink} className="secondary-button">
+                  Copy Link
+                </button>
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(
+                    `Current UV in ${locationData.name} is ${Number(
+                      currentUv
+                    ).toFixed(1)}. ${window.location.href}`
+                  )}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="whatsapp-button"
+                >
+                  WhatsApp
+                </a>
               </div>
             </section>
           </div>
@@ -857,8 +814,7 @@ export default function App() {
                 <div>
                   <p className="eyebrow">Prevention Tools</p>
                   <h2 className="section-title">
-                    Turning UV information into reminders, thresholds, and
-                    protective actions.
+                    Turning UV information into reminders, thresholds, and protective actions.
                   </h2>
                 </div>
 
@@ -877,24 +833,21 @@ export default function App() {
                         setDynamicThemeEnabled(next);
                         await savePreferences({ dynamicThemeEnabled: next });
                       }}
-                      className={
-                        dynamicThemeEnabled ? "toggle-button on" : "toggle-button"
-                      }
+                      className={dynamicThemeEnabled ? "toggle-button on" : "toggle-button"}
                     >
                       {dynamicThemeEnabled ? "On" : "Off"}
                     </button>
                   </div>
 
                   <p className="settings-meta">
-                    Current mode:{" "}
-                    {dynamicThemeEnabled ? `${risk} adaptive theme` : "Default theme"}
+                    Current mode: {dynamicThemeEnabled ? `${risk} adaptive theme` : "Default theme"}
                   </p>
                 </div>
               </div>
 
               <p className="body-text">
-                This section saves reminder and alert settings through the
-                backend, making the project closer to a real-world web system.
+                This section supports configurable UV alerts, sunscreen reminders,
+                notification settings, and adaptive visual feedback.
               </p>
             </section>
 
@@ -902,8 +855,7 @@ export default function App() {
               <div className="panel small-panel">
                 <h3 className="card-title">UV Threshold Alert</h3>
                 <p className="small-copy">
-                  Receive an alert when the live UV level reaches your chosen
-                  threshold.
+                  Receive an alert when the live UV level reaches your chosen threshold.
                 </p>
 
                 <label className="field-label">Alert me when UV reaches</label>
@@ -928,24 +880,20 @@ export default function App() {
                     setThresholdEnabled(next);
                     await savePreferences({ thresholdEnabled: next });
                   }}
-                  className={
-                    thresholdEnabled ? "dark-button full-width" : "primary-button full-width"
-                  }
+                  className={thresholdEnabled ? "dark-button full-width" : "primary-button full-width"}
                 >
                   {thresholdEnabled ? "Disable UV Alert" : "Enable UV Alert"}
                 </button>
 
                 <p className="field-meta">
-                  Current UV: {Number(currentUv).toFixed(1)} | Threshold:{" "}
-                  {uvThreshold}
+                  Current UV: {Number(currentUv).toFixed(1)} | Threshold: {uvThreshold}
                 </p>
               </div>
 
               <div className="panel small-panel">
                 <h3 className="card-title">Sunscreen Reminder</h3>
                 <p className="small-copy">
-                  Create a repeating reminder to reapply sunscreen throughout
-                  the day.
+                  Create a repeating reminder to reapply sunscreen throughout the day.
                 </p>
 
                 <label className="field-label">Start time</label>
@@ -981,9 +929,7 @@ export default function App() {
                     setReminderEnabled(next);
                     await savePreferences({ reminderEnabled: next });
                   }}
-                  className={
-                    reminderEnabled ? "dark-button full-width" : "info-button full-width"
-                  }
+                  className={reminderEnabled ? "dark-button full-width" : "info-button full-width"}
                 >
                   {reminderEnabled ? "Disable Reminder" : "Enable Reminder"}
                 </button>
@@ -996,8 +942,7 @@ export default function App() {
               <div className="panel small-panel">
                 <h3 className="card-title">Notification Settings</h3>
                 <p className="small-copy">
-                  Enable browser notifications for UV alerts and sunscreen
-                  reminders.
+                  Enable browser notifications for UV alerts and sunscreen reminders.
                 </p>
 
                 <button
@@ -1014,8 +959,7 @@ export default function App() {
                 </div>
 
                 <div className="tip-box orange-tip">
-                  Your skin may start experiencing damage in {timeToDamage} if
-                  unprotected.
+                  Your skin may start experiencing damage in {timeToDamage} if unprotected.
                 </div>
               </div>
             </section>
