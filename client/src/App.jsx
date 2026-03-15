@@ -10,7 +10,7 @@ import {
   Legend
 } from "recharts";
 
-const API_BASE = "http://localhost:5001";
+const API_BASE = "https://five120-uv-project.onrender.com";
 
 const FALLBACK_CITY = {
   name: "Melbourne, Victoria",
