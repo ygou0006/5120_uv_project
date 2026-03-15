@@ -4,10 +4,45 @@ const axios = require("axios");
 const db = require("./db");
 
 const app = express();
-const PORT = 5001;
+const PORT = process.env.PORT || 5001;
 
 app.use(cors());
 app.use(express.json());
+
+function buildLocationName(result, latitude, longitude) {
+  if (!result) {
+    return `Lat ${Number(latitude).toFixed(2)}, Lon ${Number(longitude).toFixed(2)}`;
+  }
+
+  const primary =
+    result.city ||
+    result.town ||
+    result.village ||
+    result.suburb ||
+    result.municipality ||
+    result.locality ||
+    result.name;
+
+  const secondary =
+    result.admin1 ||
+    result.state ||
+    result.region ||
+    result.country;
+
+  if (primary && secondary) {
+    return `${primary}, ${secondary}`;
+  }
+
+  if (primary) {
+    return primary;
+  }
+
+  if (secondary) {
+    return secondary;
+  }
+
+  return `Lat ${Number(latitude).toFixed(2)}, Lon ${Number(longitude).toFixed(2)}`;
+}
 
 app.get("/", (req, res) => {
   res.json({ message: "Sun Safety backend is running." });
@@ -16,22 +51,39 @@ app.get("/", (req, res) => {
 app.get("/api/reverse-geocode", async (req, res) => {
   try {
     const { lat, lng } = req.query;
+
     if (!lat || !lng) {
       return res.status(400).json({ error: "lat and lng are required" });
     }
 
     const url = `https://geocoding-api.open-meteo.com/v1/reverse?latitude=${lat}&longitude=${lng}&language=en&format=json`;
     const response = await axios.get(url);
-    res.json(response.data);
+
+    const result = response.data?.results?.[0] || null;
+    const displayName = buildLocationName(result, lat, lng);
+
+    res.json({
+      raw: result,
+      displayName,
+      timezone: result?.timezone || "Australia/Melbourne"
+    });
   } catch (error) {
     console.error("Reverse geocode error:", error.message);
-    res.status(500).json({ error: "Failed to reverse geocode location" });
+
+    const { lat, lng } = req.query;
+
+    res.json({
+      raw: null,
+      displayName: `Lat ${Number(lat).toFixed(2)}, Lon ${Number(lng).toFixed(2)}`,
+      timezone: "Australia/Melbourne"
+    });
   }
 });
 
 app.get("/api/uv", async (req, res) => {
   try {
     const { lat, lng, timezone = "Australia/Melbourne" } = req.query;
+
     if (!lat || !lng) {
       return res.status(400).json({ error: "lat and lng are required" });
     }
@@ -67,7 +119,9 @@ app.get("/api/preferences", (req, res) => {
      WHERE up.user_id = 1`,
     [],
     (err, row) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
       res.json(row || {});
     }
   );
@@ -105,7 +159,9 @@ app.post("/api/preferences", (req, res) => {
         reminderEnabled ? 1 : 0
       ],
       (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
         res.json({ message: "Preferences saved successfully" });
       }
     );
@@ -120,7 +176,9 @@ app.post("/api/reminder-log", (req, res) => {
      VALUES (1, ?, ?)`,
     [reminderTime, status || "sent"],
     function (err) {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
       res.json({ message: "Reminder log saved", id: this.lastID });
     }
   );
@@ -141,6 +199,7 @@ app.get("/api/myths", (req, res) => {
       fact: "Repeated UV exposure in early adulthood can contribute to long-term skin damage and skin cancer risk."
     }
   ];
+
   res.json(myths);
 });
 
@@ -149,7 +208,9 @@ app.get("/api/skin-cancer-trend", (req, res) => {
     "SELECT year, incidence_rate FROM skin_cancer_trend ORDER BY year",
     [],
     (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
       res.json(rows);
     }
   );
@@ -160,7 +221,9 @@ app.get("/api/monthly-uv-2pm", (req, res) => {
     "SELECT month, avg_uv_2pm FROM monthly_uv_2pm ORDER BY month",
     [],
     (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
       res.json(rows);
     }
   );

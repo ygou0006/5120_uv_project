@@ -10,13 +10,15 @@ import {
   Legend
 } from "recharts";
 
-const API_BASE = "https://five120-uv-project.onrender.com";
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5001";
 
 const FALLBACK_CITY = {
   name: "Melbourne, Victoria",
   latitude: -37.8136,
   longitude: 144.9631,
-  timezone: "Australia/Melbourne"
+  timezone: "Australia/Melbourne",
+  source: "fallback"
 };
 
 export default function App() {
@@ -34,7 +36,7 @@ export default function App() {
     longitude: FALLBACK_CITY.longitude,
     timezone: FALLBACK_CITY.timezone,
     name: FALLBACK_CITY.name,
-    source: "fallback"
+    source: FALLBACK_CITY.source
   });
 
   const [uvThreshold, setUvThreshold] = useState(8);
@@ -56,6 +58,69 @@ export default function App() {
     { key: "awareness", label: "Awareness" },
     { key: "protection", label: "Protection Tools" }
   ];
+
+  function buildLocationName(result, latitude, longitude) {
+    if (!result) {
+      return `Lat ${latitude.toFixed(2)}, Lon ${longitude.toFixed(2)}`;
+    }
+
+    const primary =
+      result.city ||
+      result.town ||
+      result.village ||
+      result.suburb ||
+      result.municipality ||
+      result.locality ||
+      result.name;
+
+    const secondary =
+      result.admin1 ||
+      result.state ||
+      result.region ||
+      result.country;
+
+    if (primary && secondary) {
+      return `${primary}, ${secondary}`;
+    }
+
+    if (primary) {
+      return primary;
+    }
+
+    if (secondary) {
+      return secondary;
+    }
+
+    return `Lat ${latitude.toFixed(2)}, Lon ${longitude.toFixed(2)}`;
+  }
+
+  async function reverseGeocode(latitude, longitude) {
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/reverse-geocode?lat=${latitude}&lng=${longitude}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Unable to identify location");
+      }
+
+      const data = await response.json();
+
+      return {
+        name: data.displayName
+          ? data.displayName
+          : buildLocationName(data.raw, latitude, longitude),
+        timezone: data.timezone || FALLBACK_CITY.timezone
+      };
+    } catch (error) {
+      console.error("Reverse geocode failed:", error);
+
+      return {
+        name: `Lat ${latitude.toFixed(2)}, Lon ${longitude.toFixed(2)}`,
+        timezone: FALLBACK_CITY.timezone
+      };
+    }
+  }
 
   async function loadPreferences() {
     try {
@@ -125,35 +190,13 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function reverseGeocode(latitude, longitude) {
-      try {
-        const response = await fetch(
-          `${API_BASE}/api/reverse-geocode?lat=${latitude}&lng=${longitude}`
-        );
-        if (!response.ok) throw new Error("Unable to identify current location.");
-        const data = await response.json();
-        const result = data?.results?.[0];
-        if (!result) return null;
-
-        const city = result.city || result.name || "Current Location";
-        const admin = result.admin1 ? `, ${result.admin1}` : "";
-
-        return {
-          name: `${city}${admin}`,
-          timezone: result.timezone || FALLBACK_CITY.timezone
-        };
-      } catch {
-        return null;
-      }
-    }
-
     async function getUserLocation() {
       try {
         setLoadingLocation(true);
 
         if (!("geolocation" in navigator)) {
           setBannerMessage(
-            "Geolocation is not available in this browser. Using Melbourne as the default location."
+            "Location services are not available in this browser. Melbourne is being used as the default location."
           );
           setLoadingLocation(false);
           return;
@@ -172,19 +215,29 @@ export default function App() {
             setLocationData({
               latitude,
               longitude,
-              timezone: place?.timezone || FALLBACK_CITY.timezone,
-              name: place?.name || "Current Location",
+              timezone: place.timezone || FALLBACK_CITY.timezone,
+              name: place.name,
               source: "gps"
             });
+
             setBannerMessage(
-              "Location detected successfully. UV information is now based on your current position."
+              "Location updated successfully."
             );
             setLoadingLocation(false);
           },
           () => {
             if (cancelled) return;
+
+            setLocationData({
+              latitude: FALLBACK_CITY.latitude,
+              longitude: FALLBACK_CITY.longitude,
+              timezone: FALLBACK_CITY.timezone,
+              name: FALLBACK_CITY.name,
+              source: "fallback"
+            });
+
             setBannerMessage(
-              "Location access was not available. Melbourne is being used as the default location."
+              "We could not access your location, so Melbourne is being used as the default location."
             );
             setLoadingLocation(false);
           },
@@ -194,11 +247,12 @@ export default function App() {
             maximumAge: 300000
           }
         );
-      } catch {
+      } catch (err) {
+        console.error("Location detection failed:", err);
         if (!cancelled) {
           setLoadingLocation(false);
           setBannerMessage(
-            "Unable to detect location. Melbourne is being used as the default location."
+            "We could not detect your location, so Melbourne is being used as the default location."
           );
         }
       }
@@ -218,7 +272,7 @@ export default function App() {
     if (!("geolocation" in navigator)) {
       setLoadingLocation(false);
       setBannerMessage(
-        "Geolocation is not available in this browser. Using Melbourne as the default location."
+        "Location services are not available in this browser."
       );
       return;
     }
@@ -228,42 +282,31 @@ export default function App() {
         const latitude = position.coords.latitude;
         const longitude = position.coords.longitude;
 
-        try {
-          const response = await fetch(
-            `${API_BASE}/api/reverse-geocode?lat=${latitude}&lng=${longitude}`
-          );
-          const data = await response.json();
-          const result = data?.results?.[0];
-          const city = result?.city || result?.name || "Current Location";
-          const admin = result?.admin1 ? `, ${result.admin1}` : "";
+        const place = await reverseGeocode(latitude, longitude);
 
-          setLocationData({
-            latitude,
-            longitude,
-            timezone: result?.timezone || FALLBACK_CITY.timezone,
-            name: `${city}${admin}`,
-            source: "gps"
-          });
-          setBannerMessage("Location refreshed successfully.");
-        } catch {
-          setLocationData((prev) => ({
-            ...prev,
-            latitude,
-            longitude,
-            source: "gps"
-          }));
-          setBannerMessage("Location refreshed successfully.");
-        } finally {
-          setLoadingLocation(false);
-        }
+        setLocationData({
+          latitude,
+          longitude,
+          timezone: place.timezone || FALLBACK_CITY.timezone,
+          name: place.name,
+          source: "gps"
+        });
+
+        setBannerMessage("Location updated successfully.");
+        setLoadingLocation(false);
       },
-      () => {
+      (error) => {
+        console.error("Refresh location failed:", error);
         setLoadingLocation(false);
         setBannerMessage(
-          "Unable to refresh location. Keeping the current location setting."
+          "We could not refresh your location. The current location setting is still being used."
         );
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
     );
   }
 
@@ -277,7 +320,10 @@ export default function App() {
           `${API_BASE}/api/uv?lat=${locationData.latitude}&lng=${locationData.longitude}&timezone=${encodeURIComponent(locationData.timezone)}`
         );
 
-        if (!response.ok) throw new Error("Unable to load live UV data.");
+        if (!response.ok) {
+          throw new Error("Unable to load live UV data.");
+        }
+
         const data = await response.json();
         setWeatherData(data);
       } catch (err) {
@@ -343,18 +389,18 @@ export default function App() {
 
   function getProtectionMessage(uv) {
     if (uv >= 11) {
-      return "Minimise direct sun exposure, seek shade immediately, and apply SPF 50+ with protective clothing.";
+      return "UV levels are extremely high. Seek shade, minimise direct sun exposure, and use SPF 50+ protection.";
     }
     if (uv >= 8) {
-      return "Use SPF 50+, wear a hat and sunglasses, and reduce prolonged outdoor exposure during peak periods.";
+      return "UV levels are very high. Use SPF 50+, wear a hat and sunglasses, and limit time in direct sun.";
     }
     if (uv >= 6) {
       return "Sun protection is recommended, especially around midday and early afternoon.";
     }
     if (uv >= 3) {
-      return "Consider basic sun protection if you will be outside for an extended period.";
+      return "Consider sun protection if you will be outdoors for an extended period.";
     }
-    return "UV risk is relatively low, though protection may still be useful during longer outdoor activities.";
+    return "UV levels are relatively low, although protection may still be useful during longer outdoor activities.";
   }
 
   function estimateSkinDamageTime(uv) {
@@ -362,7 +408,7 @@ export default function App() {
     if (uv >= 8) return "approximately 15 minutes";
     if (uv >= 6) return "approximately 20 to 25 minutes";
     if (uv >= 3) return "approximately 30 to 45 minutes";
-    return "longer than 45 minutes";
+    return "more than 45 minutes";
   }
 
   function formatTime(dateString) {
@@ -399,9 +445,10 @@ export default function App() {
     }
 
     const permission = await Notification.requestPermission();
+
     if (permission === "granted") {
       setBrowserNotificationsEnabled(true);
-      setBannerMessage("Browser notifications enabled successfully.");
+      setBannerMessage("Notifications have been enabled successfully.");
     } else {
       setBrowserNotificationsEnabled(false);
       setBannerMessage("Notification permission was not granted.");
@@ -424,11 +471,11 @@ export default function App() {
     const hourBucket = new Date().getHours();
 
     if (currentUv >= uvThreshold && lastTriggeredBucket !== hourBucket) {
-      const message = `High UV alert: current UV is ${Number(
+      const message = `UV alert: the current UV level is ${Number(
         currentUv
-      ).toFixed(1)} in ${locationData.name}. Please apply protection now.`;
+      ).toFixed(1)} in ${locationData.name}. Please take sun protection measures now.`;
       setBannerMessage(message);
-      sendNotification("High UV Alert", message);
+      sendNotification("UV Alert", message);
       setLastTriggeredBucket(hourBucket);
     }
 
@@ -457,7 +504,7 @@ export default function App() {
     setNextReminder(createReminderTimeLabel(0));
 
     reminderTimerRef.current = setInterval(async () => {
-      const message = `Reminder: reapply sunscreen to maintain protection in ${locationData.name}.`;
+      const message = `It is time to reapply sunscreen to stay protected in ${locationData.name}.`;
       setBannerMessage(message);
       sendNotification("Sunscreen Reminder", message);
       setNextReminder(createReminderTimeLabel(reminderInterval));
@@ -490,7 +537,7 @@ export default function App() {
   async function handleShare() {
     const shareText = `Current UV in ${locationData.name} is ${Number(
       currentUv
-    ).toFixed(1)} (${getRiskLabel(currentUv)}). Stay protected.`;
+    ).toFixed(1)} (${getRiskLabel(currentUv)}). Stay sun safe.`;
     const shareUrl = window.location.href;
 
     if (navigator.share) {
@@ -505,12 +552,12 @@ export default function App() {
     }
 
     await navigator.clipboard.writeText(`${shareText} ${shareUrl}`);
-    setBannerMessage("Share text copied to clipboard.");
+    setBannerMessage("Share information copied to your clipboard.");
   }
 
   async function handleCopyLink() {
     await navigator.clipboard.writeText(window.location.href);
-    setBannerMessage("Page link copied to clipboard.");
+    setBannerMessage("Page link copied to your clipboard.");
   }
 
   const risk = getRiskLabel(currentUv);
@@ -536,10 +583,10 @@ export default function App() {
       <div className="container">
         <nav className="navbar">
           <div>
-            <p className="eyebrow">FIT5120 PROTOTYPE</p>
+            <p className="eyebrow">SUN SAFETY</p>
             <h1 className="site-title">Sun Safety Awareness Platform</h1>
             <p className="subtle">
-              Full version with alerts, reminders, dynamic theme, database, and awareness charts
+              Helping you stay safe under the Australian sun.
             </p>
           </div>
 
@@ -560,7 +607,7 @@ export default function App() {
 
         {loading && (
           <div className="panel">
-            <p>Detecting location and loading live UV data...</p>
+            <p>Loading your location and the latest UV information...</p>
           </div>
         )}
 
@@ -576,47 +623,46 @@ export default function App() {
               <div className="panel">
                 <div className="hero-top-row">
                   <div>
-                    <p className="eyebrow">Project Overview</p>
+                    <p className="eyebrow">TODAY'S OVERVIEW</p>
                     <h2 className="hero-title">
-                      Supporting young adults to make informed sun-safety decisions in high-UV environments.
+                      Stay informed and protect your skin under Australia's high UV levels.
                     </h2>
                   </div>
 
                   <div className="location-card">
-                    <p className="location-title">Detected location</p>
+                    <p className="location-title">Your location</p>
                     <p className="location-name">{locationData.name}</p>
                     <p className="location-meta">
                       {locationData.source === "gps"
-                        ? "Using current device location"
-                        : "Using default location"}
+                        ? "Using your device location to provide local UV information"
+                        : "Using Melbourne as the default location"}
                     </p>
                     <button onClick={detectLocationAgain} className="dark-button">
-                      Refresh Location
+                      Update Location
                     </button>
                   </div>
                 </div>
 
                 <p className="body-text">
-                  This full version combines live UV data, proactive alerts, reminders,
-                  dynamic interface adaptation, database-backed awareness content, and two
-                  educational charts to promote safer sun behaviour.
+                  Check current UV conditions, understand when the risk is highest,
+                  and take practical steps to reduce the chance of sun damage during the day.
                 </p>
 
                 <div className="badge-row">
-                  <span className="badge badge-orange">Automatic location detection</span>
-                  <span className="badge badge-blue">Hourly UV interpretation</span>
-                  <span className="badge badge-green">Database-driven awareness content</span>
+                  <span className="badge badge-orange">Live UV updates</span>
+                  <span className="badge badge-blue">Hourly UV outlook</span>
+                  <span className="badge badge-green">Sun safety guidance</span>
                 </div>
               </div>
 
               <div className={`panel uv-panel ${riskClass}`}>
-                <p className="uv-subheading">Current UV Summary</p>
+                <p className="uv-subheading">Current UV summary</p>
                 <div className="uv-display">
                   <span className="uv-number">{Number(currentUv).toFixed(1)}</span>
                   <span className="risk-pill">{risk}</span>
                 </div>
                 <p className="uv-text">
-                  Your skin may begin experiencing UV-related damage in {timeToDamage} if unprotected.
+                  Unprotected skin may begin experiencing UV-related damage in {timeToDamage}.
                 </p>
                 <div className="uv-card">
                   <p className="uv-subheading">Recommended action</p>
@@ -650,9 +696,9 @@ export default function App() {
             <section className="panel">
               <div className="section-top-row">
                 <div>
-                  <h3 className="card-title">Next 24 Hours UV Outlook</h3>
+                  <h3 className="card-title">Next 24 hours UV outlook</h3>
                   <p className="small-copy">
-                    Hourly UV estimate based on your detected location.
+                    See how UV levels are expected to change throughout the day.
                   </p>
                 </div>
                 <div className="sun-meta">
@@ -705,14 +751,13 @@ export default function App() {
         {!loading && !error && page === "awareness" && (
           <div className="page-section">
             <section className="panel">
-              <p className="eyebrow">Awareness and Education</p>
+              <p className="eyebrow">LEARN MORE</p>
               <h2 className="section-title">
-                Real database-driven visualisations for UV awareness and health education
+                Understand UV exposure and why sun protection matters
               </h2>
               <p className="body-text">
-                This page presents two awareness charts. The first chart shows the
-                long-term trend of skin cancer incidence in Australia based on your cleaned
-                Excel dataset. The second chart shows Melbourne average UV index at 2PM by month.
+                Explore long-term health trends, seasonal UV patterns, and common myths
+                so you can make safer decisions outdoors.
               </p>
             </section>
 
@@ -720,7 +765,7 @@ export default function App() {
               <div className="panel">
                 <h3 className="card-title">Australian Skin Cancer Incidence Trend</h3>
                 <p className="small-copy">
-                  Data source: cleaned Excel dataset imported into the relational database.
+                  This chart shows how skin cancer incidence has changed over time in Australia.
                 </p>
                 <div className="chart-large">
                   <ResponsiveContainer width="100%" height="100%">
@@ -746,7 +791,7 @@ export default function App() {
               <div className="panel">
                 <h3 className="card-title">Melbourne Average UV Index at 2PM by Month</h3>
                 <p className="small-copy">
-                  Data source: monthly 2PM UV values stored in the relational database.
+                  This chart highlights how average UV levels change across the year in Melbourne.
                 </p>
                 <div className="chart-large">
                   <ResponsiveContainer width="100%" height="100%">
@@ -785,7 +830,7 @@ export default function App() {
 
               <div className="share-row">
                 <button onClick={handleShare} className="primary-button">
-                  Share Page
+                  Share
                 </button>
                 <button onClick={handleCopyLink} className="secondary-button">
                   Copy Link
@@ -812,18 +857,18 @@ export default function App() {
             <section className="panel">
               <div className="protection-top-row">
                 <div>
-                  <p className="eyebrow">Prevention Tools</p>
+                  <p className="eyebrow">PERSONAL TOOLS</p>
                   <h2 className="section-title">
-                    Turning UV information into reminders, thresholds, and protective actions.
+                    Personalise your sun protection settings
                   </h2>
                 </div>
 
                 <div className="settings-card">
                   <div className="settings-row">
                     <div>
-                      <p className="settings-title">Dynamic UV Theme</p>
+                      <p className="settings-title">Adaptive colour theme</p>
                       <p className="settings-copy">
-                        Let the site colour adapt to the current UV risk level.
+                        Let the page colour reflect the current UV risk level.
                       </p>
                     </div>
 
@@ -840,22 +885,22 @@ export default function App() {
                   </div>
 
                   <p className="settings-meta">
-                    Current mode: {dynamicThemeEnabled ? `${risk} adaptive theme` : "Default theme"}
+                    Current mode: {dynamicThemeEnabled ? `${risk} risk-based theme` : "Default theme"}
                   </p>
                 </div>
               </div>
 
               <p className="body-text">
-                This section supports configurable UV alerts, sunscreen reminders,
-                notification settings, and adaptive visual feedback.
+                Stay protected with personalised sun safety tools.
+                Set UV alerts, receive sunscreen reminders, and get guidance based on the current UV level.
               </p>
             </section>
 
             <section className="stats-grid three-cols">
               <div className="panel small-panel">
-                <h3 className="card-title">UV Threshold Alert</h3>
+                <h3 className="card-title">UV Alert</h3>
                 <p className="small-copy">
-                  Receive an alert when the live UV level reaches your chosen threshold.
+                  Choose a UV level that will trigger a warning for you.
                 </p>
 
                 <label className="field-label">Alert me when UV reaches</label>
@@ -882,18 +927,18 @@ export default function App() {
                   }}
                   className={thresholdEnabled ? "dark-button full-width" : "primary-button full-width"}
                 >
-                  {thresholdEnabled ? "Disable UV Alert" : "Enable UV Alert"}
+                  {thresholdEnabled ? "Turn Off Alert" : "Turn On Alert"}
                 </button>
 
                 <p className="field-meta">
-                  Current UV: {Number(currentUv).toFixed(1)} | Threshold: {uvThreshold}
+                  Current UV: {Number(currentUv).toFixed(1)} | Alert level: {uvThreshold}
                 </p>
               </div>
 
               <div className="panel small-panel">
                 <h3 className="card-title">Sunscreen Reminder</h3>
                 <p className="small-copy">
-                  Create a repeating reminder to reapply sunscreen throughout the day.
+                  Schedule reminders to reapply sunscreen during the day.
                 </p>
 
                 <label className="field-label">Start time</label>
@@ -931,7 +976,7 @@ export default function App() {
                   }}
                   className={reminderEnabled ? "dark-button full-width" : "info-button full-width"}
                 >
-                  {reminderEnabled ? "Disable Reminder" : "Enable Reminder"}
+                  {reminderEnabled ? "Turn Off Reminder" : "Turn On Reminder"}
                 </button>
 
                 <p className="field-meta">
@@ -940,9 +985,9 @@ export default function App() {
               </div>
 
               <div className="panel small-panel">
-                <h3 className="card-title">Notification Settings</h3>
+                <h3 className="card-title">Notifications</h3>
                 <p className="small-copy">
-                  Enable browser notifications for UV alerts and sunscreen reminders.
+                  Allow browser notifications so alerts and reminders can appear on your device.
                 </p>
 
                 <button
@@ -951,15 +996,15 @@ export default function App() {
                 >
                   {browserNotificationsEnabled
                     ? "Notifications Enabled"
-                    : "Enable Browser Notifications"}
+                    : "Enable Notifications"}
                 </button>
 
                 <div className="tip-box neutral-tip">
-                  Suggested action for current UV: {protectionMessage}
+                  Current advice: {protectionMessage}
                 </div>
 
                 <div className="tip-box orange-tip">
-                  Your skin may start experiencing damage in {timeToDamage} if unprotected.
+                  Unprotected skin may begin experiencing damage in {timeToDamage}.
                 </div>
               </div>
             </section>
