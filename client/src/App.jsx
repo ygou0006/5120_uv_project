@@ -220,9 +220,7 @@ export default function App() {
               source: "gps"
             });
 
-            setBannerMessage(
-              "Location updated successfully."
-            );
+            setBannerMessage("Location updated successfully.");
             setLoadingLocation(false);
           },
           () => {
@@ -327,7 +325,7 @@ export default function App() {
         const data = await response.json();
         setWeatherData(data);
       } catch (err) {
-        setError(err.message || "Something went wrong while loading UV data.");
+        setError(err.message || "Unable to load live UV data.");
       } finally {
         setLoadingWeather(false);
       }
@@ -463,6 +461,39 @@ export default function App() {
     ) {
       new Notification(title, { body });
     }
+  }
+
+  function sendTestNotification() {
+    if (!("Notification" in window)) {
+      setBannerMessage("Your browser does not support notifications.");
+      return;
+    }
+
+    if (Notification.permission === "granted") {
+      new Notification("Sun Safety Test", {
+        body: "Notifications are working correctly. Stay sun safe!"
+      });
+      setBannerMessage("Test notification sent successfully.");
+      return;
+    }
+
+    if (Notification.permission !== "denied") {
+      Notification.requestPermission().then((permission) => {
+        if (permission === "granted") {
+          setBrowserNotificationsEnabled(true);
+          new Notification("Sun Safety Test", {
+            body: "Notifications are now enabled. Stay sun safe!"
+          });
+          setBannerMessage("Test notification sent successfully.");
+        } else {
+          setBrowserNotificationsEnabled(false);
+          setBannerMessage("Notification permission was not granted.");
+        }
+      });
+      return;
+    }
+
+    setBannerMessage("Notifications are blocked in your browser settings.");
   }
 
   useEffect(() => {
@@ -625,7 +656,8 @@ export default function App() {
                   <div>
                     <p className="eyebrow">TODAY'S OVERVIEW</p>
                     <h2 className="hero-title">
-                      Stay informed and protect your skin under Australia's high UV levels.
+                      Stay informed and protect your skin under Australia&apos;s
+                      high UV levels.
                     </h2>
                   </div>
 
@@ -644,8 +676,9 @@ export default function App() {
                 </div>
 
                 <p className="body-text">
-                  Check current UV conditions, understand when the risk is highest,
-                  and take practical steps to reduce the chance of sun damage during the day.
+                  Check current UV conditions, understand when the risk is
+                  highest, and take practical steps to reduce the chance of sun
+                  damage during the day.
                 </p>
 
                 <div className="badge-row">
@@ -662,7 +695,8 @@ export default function App() {
                   <span className="risk-pill">{risk}</span>
                 </div>
                 <p className="uv-text">
-                  Unprotected skin may begin experiencing UV-related damage in {timeToDamage}.
+                  Unprotected skin may begin experiencing UV-related damage in{" "}
+                  {timeToDamage}.
                 </p>
                 <div className="uv-card">
                   <p className="uv-subheading">Recommended action</p>
@@ -677,12 +711,17 @@ export default function App() {
                 { title: "Risk Category", text: risk },
                 {
                   title: "Temperature",
-                  text: currentTemp != null ? `${Number(currentTemp).toFixed(1)}°C` : "—"
+                  text:
+                    currentTemp != null
+                      ? `${Number(currentTemp).toFixed(1)}°C`
+                      : "—"
                 },
                 {
                   title: "Peak Hour Today",
                   text: peakHourInfo
-                    ? `${formatTime(peakHourInfo.time)} (${Number(peakHourInfo.uv).toFixed(1)})`
+                    ? `${formatTime(peakHourInfo.time)} (${Number(
+                        peakHourInfo.uv
+                      ).toFixed(1)})`
                     : "—"
                 }
               ].map((item) => (
@@ -756,16 +795,19 @@ export default function App() {
                 Understand UV exposure and why sun protection matters
               </h2>
               <p className="body-text">
-                Explore long-term health trends, seasonal UV patterns, and common myths
-                so you can make safer decisions outdoors.
+                Explore long-term health trends, seasonal UV patterns, and
+                common myths so you can make safer decisions outdoors.
               </p>
             </section>
 
             <section className="two-col-grid">
               <div className="panel">
-                <h3 className="card-title">Australian Skin Cancer Incidence Trend</h3>
+                <h3 className="card-title">
+                  Australian Skin Cancer Incidence Trend
+                </h3>
                 <p className="small-copy">
-                  This chart shows how skin cancer incidence has changed over time in Australia.
+                  This chart shows how skin cancer incidence has changed over
+                  time in Australia.
                 </p>
                 <div className="chart-large">
                   <ResponsiveContainer width="100%" height="100%">
@@ -789,9 +831,12 @@ export default function App() {
               </div>
 
               <div className="panel">
-                <h3 className="card-title">Melbourne Average UV Index at 2PM by Month</h3>
+                <h3 className="card-title">
+                  Melbourne Average UV Index at 2PM by Month
+                </h3>
                 <p className="small-copy">
-                  This chart highlights how average UV levels change across the year in Melbourne.
+                  This chart highlights how average UV levels change across the
+                  year in Melbourne.
                 </p>
                 <div className="chart-large">
                   <ResponsiveContainer width="100%" height="100%">
@@ -878,21 +923,27 @@ export default function App() {
                         setDynamicThemeEnabled(next);
                         await savePreferences({ dynamicThemeEnabled: next });
                       }}
-                      className={dynamicThemeEnabled ? "toggle-button on" : "toggle-button"}
+                      className={
+                        dynamicThemeEnabled ? "toggle-button on" : "toggle-button"
+                      }
                     >
                       {dynamicThemeEnabled ? "On" : "Off"}
                     </button>
                   </div>
 
                   <p className="settings-meta">
-                    Current mode: {dynamicThemeEnabled ? `${risk} risk-based theme` : "Default theme"}
+                    Current mode:{" "}
+                    {dynamicThemeEnabled
+                      ? `${risk} risk-based theme`
+                      : "Default theme"}
                   </p>
                 </div>
               </div>
 
               <p className="body-text">
-                Stay protected with personalised sun safety tools.
-                Set UV alerts, receive sunscreen reminders, and get guidance based on the current UV level.
+                Stay protected with personalised sun safety tools. Set UV
+                alerts, receive sunscreen reminders, and get guidance based on
+                the current UV level.
               </p>
             </section>
 
@@ -925,13 +976,18 @@ export default function App() {
                     setThresholdEnabled(next);
                     await savePreferences({ thresholdEnabled: next });
                   }}
-                  className={thresholdEnabled ? "dark-button full-width" : "primary-button full-width"}
+                  className={
+                    thresholdEnabled
+                      ? "dark-button full-width"
+                      : "primary-button full-width"
+                  }
                 >
                   {thresholdEnabled ? "Turn Off Alert" : "Turn On Alert"}
                 </button>
 
                 <p className="field-meta">
-                  Current UV: {Number(currentUv).toFixed(1)} | Alert level: {uvThreshold}
+                  Current UV: {Number(currentUv).toFixed(1)} | Alert level:{" "}
+                  {uvThreshold}
                 </p>
               </div>
 
@@ -974,20 +1030,27 @@ export default function App() {
                     setReminderEnabled(next);
                     await savePreferences({ reminderEnabled: next });
                   }}
-                  className={reminderEnabled ? "dark-button full-width" : "info-button full-width"}
+                  className={
+                    reminderEnabled
+                      ? "dark-button full-width"
+                      : "info-button full-width"
+                  }
                 >
                   {reminderEnabled ? "Turn Off Reminder" : "Turn On Reminder"}
                 </button>
 
                 <p className="field-meta">
-                  {nextReminder ? `Next reminder: ${nextReminder}` : "No reminder scheduled."}
+                  {nextReminder
+                    ? `Next reminder: ${nextReminder}`
+                    : "No reminder scheduled."}
                 </p>
               </div>
 
               <div className="panel small-panel">
                 <h3 className="card-title">Notifications</h3>
                 <p className="small-copy">
-                  Allow browser notifications so alerts and reminders can appear on your device.
+                  Allow browser notifications so alerts and reminders can appear
+                  on your device.
                 </p>
 
                 <button
@@ -999,12 +1062,20 @@ export default function App() {
                     : "Enable Notifications"}
                 </button>
 
+                <button
+                  onClick={sendTestNotification}
+                  className="secondary-button full-width"
+                >
+                  Send Test Notification
+                </button>
+
                 <div className="tip-box neutral-tip">
                   Current advice: {protectionMessage}
                 </div>
 
                 <div className="tip-box orange-tip">
-                  Unprotected skin may begin experiencing damage in {timeToDamage}.
+                  Unprotected skin may begin experiencing damage in{" "}
+                  {timeToDamage}.
                 </div>
               </div>
             </section>
